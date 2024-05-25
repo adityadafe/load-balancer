@@ -27,6 +27,8 @@ func (s *Server) Run() {
 	})
 
 	sm.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
 		fmt.Print("Server hosted at ", port, " served request to ", r.UserAgent())
 		// converting port to int
 		pti, _ := strconv.Atoi(port[1:])
