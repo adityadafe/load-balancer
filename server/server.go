@@ -36,6 +36,7 @@ func (s *Server) Run() {
 	})
 
 	fmt.Println("Starting server ... ")
+	fmt.Println("Server is ready to serve")
 
 	err := http.ListenAndServe(s.Addr, sm)
 

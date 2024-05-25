@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -69,7 +70,10 @@ func healthChecks() {
 	}
 }
 
-func GetCurrentRobin() *Server {
+func GetCurrentRobin() (*Server, error) {
+	if len(activeSvr) == 0 {
+		return nil, errors.New("No current active servers")
+	}
 	mu.Lock()
 	curr++
 	fmt.Println("Request forwarded to Server ", curr)
@@ -78,7 +82,7 @@ func GetCurrentRobin() *Server {
 	}
 	robin := activeSvr[curr]
 	mu.Unlock()
-	return robin
+	return robin, nil
 }
 
 func ForwardRequest(w http.ResponseWriter, r *http.Request, str string) {
@@ -112,8 +116,15 @@ func main() {
 
 	go healthChecks()
 
+	fmt.Println("Load Balancer is ready to serve")
+
 	http.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		robin := GetCurrentRobin()
+		w.Header().Add("Content-Type", "application/json")
+		robin, err := GetCurrentRobin()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+		w.WriteHeader(http.StatusOK)
 		ForwardRequest(w, r, robin.url)
 	})
 
