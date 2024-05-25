@@ -2,11 +2,16 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"net/http"
+	"sync"
 	"time"
 )
 
-var allServers []int
+var (
+	allServers []int
+	mu         sync.RWMutex
+)
 
 func LookActiveServer(mp *map[int]bool) {
 	for {
@@ -18,11 +23,11 @@ func LookActiveServer(mp *map[int]bool) {
 			str := fmt.Sprintf("http://localhost:%d/health", st)
 			_, err := http.Get(str)
 			if err != nil {
-				_, ok := (*mp)[st]
-				if ok {
+				if _, ok := (*mp)[st]; ok {
 					delete((*mp), st)
 				}
 				fails++
+				st++
 				continue
 			}
 
@@ -36,26 +41,28 @@ func LookActiveServer(mp *map[int]bool) {
 
 func GetAllServer(mp *map[int]bool) {
 	for {
+		// all go routines can readconcurrently after placing read lock
+		mu.RLock()
 		if len(*mp) != 0 {
 			for k := range *mp {
 				allServers = append(allServers, k)
 			}
+			mu.RUnlock()
 		}
-		time.Sleep(1 * time.Second)
-		if len(*mp) != 0 {
-			allServers = []int{}
-		}
+
+		time.Sleep(2 * time.Second)
+		allServers = []int{}
 	}
 }
 
-func GetServer(curr *int) int {
-	fmt.Println(*curr)
+func GetCurrentRobin(curr *int) int {
 	*curr++
+	fmt.Println(*curr)
 	if *curr >= len(allServers) {
 		*curr = 0
 	}
-	dick := allServers[*curr]
-	return dick
+	robin := allServers[*curr]
+	return robin
 }
 
 func main() {
@@ -68,14 +75,22 @@ func main() {
 	go GetAllServer(&mp)
 
 	http.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		robin := GetServer(&curr)
+		robin := GetCurrentRobin(&curr)
 		str := fmt.Sprintf("http://localhost:%d", robin)
 		proxyReq, err := http.NewRequest(r.Method, str, r.Body)
 		if err != nil {
-			fmt.Println("Error occured in handler ", err)
+			http.Error(w, "Error creating request", http.StatusInternalServerError)
 		}
-		proxyReq.Header.Set("Host", r.Host)
+		proxyReq.Header = r.Header.Clone()
 		proxyReq.Header.Set("X-Forwarded-For", r.RemoteAddr)
+
+		client := &http.Client{}
+		res, err := client.Do(proxyReq)
+
+		if err != nil {
+			http.Error(w, "Error forwarding request", http.StatusBadGateway)
+		}
+		defer res.Body.Close()
 
 		for header, values := range r.Header {
 			for _, value := range values {
@@ -83,12 +98,8 @@ func main() {
 			}
 		}
 
-		client := &http.Client{}
-		res, err := client.Do(proxyReq)
-		fmt.Println(res.Body)
-		w.Write([]byte("wtf"))
-		defer res.Body.Close()
-
+		w.WriteHeader(res.StatusCode)
+		io.Copy(w, res.Body)
 	})
 
 	http.ListenAndServe(":5173", nil)
